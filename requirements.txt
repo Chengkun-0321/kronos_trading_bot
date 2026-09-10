@@ -1,0 +1,2 @@
+-r third_party/Kronos/requirements.txt
+requests>=2.31.0,<3

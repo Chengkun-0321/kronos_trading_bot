@@ -38,3 +38,10 @@ third_party/Kronos/webui/prediction_results/
 # Generated reports and figures from local examples
 third_party/Kronos/examples/yuce/*.json
 third_party/Kronos/examples/yuce/*.png
+
+# Local market data, reports, and process state
+data/*.sqlite3*
+data/*.lock
+data/*.log
+data/reports/
+data/discord.env

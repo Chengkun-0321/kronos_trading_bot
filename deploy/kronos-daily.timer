@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Kronos at 18:00 Asia/Taipei
+
+[Timer]
+OnCalendar=*-*-* 18:00:00 Asia/Taipei
+Persistent=false
+Unit=kronos-daily.service
+
+[Install]
+WantedBy=timers.target

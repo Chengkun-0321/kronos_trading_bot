@@ -1,0 +1,13 @@
+[Unit]
+Description=Kronos Taiwan market observation and Discord notification
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/large_space_v2/kronos_trading_bot
+EnvironmentFile=/home/large_space_v2/kronos_trading_bot/data/discord.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main daily
+TimeoutStartSec=12h
+UMask=0077
