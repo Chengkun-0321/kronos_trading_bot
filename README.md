@@ -2,6 +2,10 @@
 
 每日台灣時間 18:00，以平台可交易清單為範圍，從交易所取得日 K，使用本機 Kronos-small 預測下一交易日，再發一則 Discord 排行榜。沒有訓練、持倉查詢、下單或新聞分析。
 
+## 專案交接
+
+新工作先閱讀 [AGENTS.md](AGENTS.md)；已確認決策、階段範圍、驗證快照與後續方向見 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)。
+
 ## 執行
 
 在專案根目錄使用現有 `.venv`，缺依賴時執行 `.venv/bin/pip install -r requirements.txt`。模型須已放置於 `models/Kronos-small`、`models/Kronos-Tokenizer-base`，原始碼位於 `third_party/Kronos`。初始化與預覽不載入模型；推論自動優先使用 CUDA。
