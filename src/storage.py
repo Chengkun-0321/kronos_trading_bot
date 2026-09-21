@@ -26,6 +26,24 @@ class Store:
             CREATE TABLE IF NOT EXISTS deliveries(
                 date TEXT PRIMARY KEY, state TEXT NOT NULL, message_id TEXT);
         ''')
+        self._migrate_models()
+
+    def _migrate_models(self):
+        """原子遷移舊表至日期＋模型鍵，原有送達狀態完整歸入 pretrained。"""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            for table, fields in [('runs', 'payload TEXT NOT NULL'),
+                                  ('deliveries', 'state TEXT NOT NULL, message_id TEXT')]:
+                columns = [r[1] for r in self.db.execute(f'PRAGMA table_info({table})')]
+                if 'model_id' in columns:
+                    continue
+                self.db.execute(f'CREATE TABLE {table}_v2 (date TEXT, model_id TEXT, '
+                                f'{fields}, PRIMARY KEY(date,model_id))')
+                names = ','.join(columns)
+                self.db.execute(f"INSERT INTO {table}_v2 ({names},model_id) "
+                                f"SELECT {names},'pretrained' FROM {table}")
+                self.db.execute(f'DROP TABLE {table}')
+                self.db.execute(f'ALTER TABLE {table}_v2 RENAME TO {table}')
 
     def get(self, key: str):
         """讀取 JSON 快取；不存在回傳 None。"""
@@ -56,23 +74,24 @@ class Store:
             SELECT * FROM bars WHERE symbol=? AND date<=? ORDER BY date DESC LIMIT ?
             ) ORDER BY date''', self.db, params=(symbol, day, limit))
 
-    def run(self, day: str):
+    def run(self, day: str, model_id: str = "pretrained"):
         """回傳已封存的該日預測；沒有則回傳 None。"""
-        row = self.db.execute('SELECT payload FROM runs WHERE date=?', (day,)).fetchone()
+        row = self.db.execute('SELECT payload FROM runs WHERE date=? AND model_id=?', (day, model_id)).fetchone()
         return json.loads(row[0]) if row else None
 
     def save_run(self, report: dict):
         """封存完整輸入日期、預測及略過原因；同日不覆寫既有報告。"""
         with self.db:
-            self.db.execute('INSERT INTO runs VALUES (?,?)',
-                            (report['date'], json.dumps(report, ensure_ascii=False, allow_nan=False)))
+            self.db.execute('INSERT INTO runs(date,model_id,payload) VALUES (?,?,?)',
+                            (report['date'], report.get('model_id', 'pretrained'),
+                             json.dumps(report, ensure_ascii=False, allow_nan=False)))
 
-    def delivery(self, day: str):
+    def delivery(self, day: str, model_id: str = "pretrained"):
         """取得通知狀態與 Discord 訊息 ID；無紀錄回傳 None。"""
-        return self.db.execute('SELECT state,message_id FROM deliveries WHERE date=?', (day,)).fetchone()
+        return self.db.execute('SELECT state,message_id FROM deliveries WHERE date=? AND model_id=?', (day, model_id)).fetchone()
 
-    def set_delivery(self, day: str, state: str, message_id=None):
+    def set_delivery(self, day: str, state: str, message_id=None, model_id: str = "pretrained"):
         """持久化送信狀態，讓程序意外終止後仍能阻止盲目重送。"""
         with self.db:
-            self.db.execute('INSERT OR REPLACE INTO deliveries VALUES (?,?,?)',
-                            (day, state, message_id))
+            self.db.execute('INSERT OR REPLACE INTO deliveries(date,model_id,state,message_id) VALUES (?,?,?,?)',
+                            (day, model_id, state, message_id))

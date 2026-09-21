@@ -45,3 +45,6 @@ data/*.lock
 data/*.log
 data/reports/
 data/discord.env
+data/research/
+
+/data/gpu-benchmark-*/

@@ -45,12 +45,12 @@ def rank(predictions: list[dict]) -> list[dict]:
 class Predictor:
     """延遲載入 GPU 模型，讓初始化與預覽不需要 CUDA。"""
 
-    def __init__(self, device: str | None = None):
+    def __init__(self, device: str | None = None, model_path: Path | None = None):
         """device 可指定 cpu/cuda:0；省略時使用 Kronos 的裝置偵測。"""
         sys.path.insert(0, str(ROOT / 'third_party/Kronos'))
         import torch
         from model import Kronos, KronosTokenizer, KronosPredictor
-        model = Kronos.from_pretrained(str(ROOT / 'models/Kronos-small'), local_files_only=True)
+        model = Kronos.from_pretrained(str(model_path or ROOT / 'models/Kronos-small'), local_files_only=True)
         tokenizer = KronosTokenizer.from_pretrained(str(ROOT / 'models/Kronos-Tokenizer-base'), local_files_only=True)
         model.eval()
         tokenizer.eval()
@@ -70,6 +70,39 @@ class Predictor:
                                          pd.Series(pd.to_datetime([target])), pred_len=1,
                                          T=1.0, top_p=0.9, top_k=0, sample_count=1, verbose=False)
         return {key: float(result.iloc[0][key]) for key in COLS}
+
+    def predict_batch(self, items):
+        """固定每個樣本的抽樣串流；批次數值差異由評估快取版本隔離。"""
+        from model.kronos import calc_time_stamps
+        torch = self.torch
+        values, stamps, means, stds, seeds = [], [], [], [], []
+        for symbol, frame, target in items:
+            x = frame[COLS].values.astype(np.float32)
+            mean, std = x.mean(axis=0), x.std(axis=0)
+            values.append(np.clip((x - mean) / (std + 1e-5), -5, 5))
+            stamps.append(calc_time_stamps(pd.to_datetime(frame['date'])).values.astype(np.float32))
+            means.append(mean)
+            stds.append(std)
+            seeds.append(int.from_bytes(hashlib.sha256(f'42:{symbol}:{target}'.encode()).digest()[:4], 'big'))
+        device = self.engine.device
+        generators = [torch.Generator(device=device).manual_seed(seed) for seed in seeds]
+        def sample(logits):
+            from model.kronos import top_k_top_p_filtering
+            probs = torch.softmax(top_k_top_p_filtering(logits, top_k=0, top_p=0.9), dim=-1)
+            return torch.cat([torch.multinomial(row.unsqueeze(0), 1, generator=g)
+                              for row, g in zip(probs, generators)], dim=0)
+        with torch.inference_mode():
+            x = torch.from_numpy(np.stack(values)).to(device)
+            stamp = torch.from_numpy(np.stack(stamps)).to(device)
+            pre, post = self.engine.tokenizer.encode(x, half=True)
+            logits, context = self.engine.model.decode_s1(pre, post, stamp)
+            next_pre = sample(logits[:, -1, :])
+            logits = self.engine.model.decode_s2(context, next_pre)
+            next_post = sample(logits[:, -1, :])
+            decoded = self.engine.tokenizer.decode([torch.cat([pre, next_pre], dim=1),
+                                                    torch.cat([post, next_post], dim=1)], half=True)
+            result = decoded[:, -1, :].cpu().numpy() * (np.stack(stds) + 1e-5) + np.stack(means)
+        return [{key: float(row[i]) for i, key in enumerate(COLS)} for row in result]
 
 
 def make_report(store, universe: dict, day: date, target: date, predictor_factory=Predictor) -> dict:

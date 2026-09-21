@@ -2,6 +2,9 @@
 Description=Kronos Taiwan market observation and Discord notification
 After=network-online.target
 Wants=network-online.target
+OnFailure=kronos-failure-notify.service
+StartLimitIntervalSec=23h
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
@@ -9,5 +12,8 @@ WorkingDirectory=/home/large_space_v2/kronos_trading_bot
 EnvironmentFile=/home/large_space_v2/kronos_trading_bot/data/discord.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main daily
+Restart=on-failure
+RestartMode=direct
+RestartSec=5min
 TimeoutStartSec=12h
 UMask=0077

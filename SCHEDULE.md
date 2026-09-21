@@ -12,10 +12,12 @@
 | 觸發時間 | 每日台灣時間 18:00；`OnCalendar=*-*-* 18:00:00 Asia/Taipei` |
 | Timer 原始檔 | [deploy/kronos-daily.timer](deploy/kronos-daily.timer) |
 | Service 原始檔 | [deploy/kronos-daily.service](deploy/kronos-daily.service) |
+| 告警單元 | [deploy/kronos-failure-notify.service](deploy/kronos-failure-notify.service) |
 | 安裝位置 | `/home/ciot/.config/systemd/user/`，符號連結指向專案 `deploy/` 檔案 |
 | 工作目錄 | `/home/large_space_v2/kronos_trading_bot` |
 | 執行指令 | `/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main daily` |
 | 憑證設定 | `data/discord.env`，權限 600、Git 忽略；不在本文件記錄網址或 token |
+| 失敗重啟 | 間隔5分鐘；23小時內最多3次啟動，耗盡後發 Discord 告警 |
 | 單次執行上限 | `TimeoutStartSec=12h` |
 | 關機補跑 | `Persistent=false`，錯過時間不補跑 |
 
@@ -23,16 +25,16 @@
 
 程式確認交易日後，更新平台可交易清單及交易所日 K，使用本機 Kronos 預測，保存完整結果，再發送正漲幅前20名至 Discord；不足20檔照實呈現。18:00是開始時間，通知於處理完成後送出。
 
-休市日不發排行榜；官方日曆缺少的已確認臨時休市記錄於 [config/market_closures.json](config/market_closures.json)。機器必須開機且能連網。初始化與每日工作共用資料庫旁的程序鎖，重疊執行會退出並留下錯誤。程式內有有限次請求重試，但 service 未設定整次工作自動重新啟動。
+休市日不發排行榜；官方日曆缺少的已確認臨時休市記錄於 [config/market_closures.json](config/market_closures.json)。機器必須開機且能連網。初始化與每日工作共用資料庫旁的程序鎖，重疊執行會退出並留下錯誤。暫時性行情 GET 最多重試五次；service 失敗後最多再啟動兩次，已完成的市場日快取不會重抓。
 
-報告位於 `data/reports/YYYY-MM-DD.json`，資料庫位於 `data/market.sqlite3`。通知成功後同日不重送；送達狀態不明時須先人工核對 Discord，詳見 [README](README.md#discord-與排程)。
+報告位於 `data/reports/YYYY-MM-DD.json`，資料庫位於 `data/market.sqlite3`。通知成功後同日不重送；送達狀態不明時須先人工核對 Discord。自動重啟使用 `RestartMode=direct`，中途失敗不觸發 `OnFailure`；三次啟動均失敗才用原 webhook 發送無 mention 告警。Discord 故障時告警也可能失敗，journal 仍保留紀錄。詳見 [README](README.md#discord-與排程)。
 
 ## 安裝與設定更新
 
 以下是本機採用的連結式安裝方式；部署到其他路徑須先修改 service 的絕對路徑，並備妥憑證及歷史快取。使用實際執行排程的使用者操作，不加 `sudo`。
 
 ```bash
-systemctl --user link /home/large_space_v2/kronos_trading_bot/deploy/kronos-daily.service /home/large_space_v2/kronos_trading_bot/deploy/kronos-daily.timer
+systemctl --user link /home/large_space_v2/kronos_trading_bot/deploy/kronos-daily.service /home/large_space_v2/kronos_trading_bot/deploy/kronos-daily.timer /home/large_space_v2/kronos_trading_bot/deploy/kronos-failure-notify.service
 systemctl --user daemon-reload
 systemctl --user enable --now kronos-daily.timer
 ```
@@ -58,6 +60,7 @@ systemctl --user status kronos-daily.service --no-pager
 journalctl --user -u kronos-daily.service -n 50 --no-pager
 journalctl --user -u kronos-daily.service --since today --no-pager
 journalctl --user -u kronos-daily.service -f
+journalctl --user -u kronos-failure-notify.service -n 20 --no-pager
 
 # 匯出今日執行紀錄至專案已忽略的data目錄（在專案根目錄執行）
 journalctl --user -u kronos-daily.service --since today --no-pager > data/schedule.log
@@ -88,3 +91,38 @@ systemctl --user stop kronos-daily.service
 # 恢復每日排程
 systemctl --user enable --now kronos-daily.timer
 ```
+
+## 研究工作與雙模型通知（2026-09-15）
+
+既有18:00 timer不變。登錄models/taiwan-active.json後，daily改為原版、微調版各一封，部分失敗仍保留成功報告與送達狀態，重試只補未完成工作；告警改為「部分或全部模型未完成」。未登錄前仍是原版單封。
+
+prepare使用獨立研究資料庫及research.lock，不搶每日market.lock。daily／train／evaluate共用data/gpu.lock；train／evaluate在17:45–20:00停止研究GPU工作，訓練保存可續跑進度，評估保留逐筆快取，20:00後以原命令續跑（train加--resume）。程序崩潰時鎖會由系統釋放。沒有新增每月重訓timer。
+
+訓練不應由kronos-daily.service啟動。研究命令與狀態檔詳見README；不因測試或訓練額外發Discord。資料日／模型版本分開防重送，sending／unknown仍需人工核對送達情況。
+
+本次一次性研究已於2026-09-15以systemd-run啟動`kronos-research-20260914.service`，Nice=10，日誌為`data/research-five-years.log`；不含Webhook環境。研究入口遇GPU保留時段會等待並續跑，其他錯誤停止，狀態保存於`data/research/taiwan-20260914/pipeline.json`。此臨時service不會隨開機自動恢復，重開後用README的research_run命令續跑。
+
+```bash
+systemctl --user status kronos-research-20260914.service --no-pager
+tail -n 30 data/research-five-years.log
+# 中止本次研究，不影響每日通知timer
+systemctl --user stop kronos-research-20260914.service
+```
+
+
+## GPU加速續跑（2026-09-16）
+
+本次測速由kronos-gpu-benchmark-now-20260916.service於使用者授權的當日例外時段執行，19:07成功完成並套用FP16／batch128／累積1。舊研究kronos-research-20260914及原等待服務kronos-gpu-tune-20260916已停止；17:45checkpoint備份於models/taiwan-v1/resume-before-tuning.pt，未保存進度會重算。
+
+目前續跑服務為 `kronos-research-accelerated-20260916.service`，沿用原資料、模型及 `data/research-five-years.log`，19:07核對為等待20:00保留時段結束。每日timer未變更，測速不發Discord；`--allow-reserved-window-today`只作用於當日benchmark，隔日自動失效。這是一次性使用者服務，不會隨開機自動恢復。
+
+```bash
+systemctl --user status kronos-research-accelerated-20260916.service --no-pager
+tail -n 30 data/research-five-years.log
+```
+
+新版可先建立 `models/taiwan-v1/pause.request`，待checkpoint保存、研究狀態paused後再停止service；直接stop可能捨棄最近五分鐘未保存訓練，驗證中斷則重做該輪驗證。移除pause.request後才能續跑。加速設定失敗時研究入口回退一次到training-fallback.json，若仍失敗便停止。測速報告在data/gpu-benchmark-20260916/，交接日誌data/gpu-tune-20260916.log。
+
+### 128筆批次評估切換（2026-09-16）
+
+已停止舊`kronos-research-accelerated-20260916.service`以切換批次评估；新版一次性背景服務命名為`kronos-research-batch128-20260916.service`，沿用research_run、原資料與輸出目錄、data/research-five-years.log，已完成訓練不重跑。使用獨立批次評估快取重算兩模型；每日17:45–20:00保留、GPU鎖與完成後activate行為不變。查詢時使用新服務名。

@@ -11,7 +11,7 @@ import requests
 
 from src.data import Calendar, DataSource, Http, parse_daily, parse_date
 from src.main import TAIPEI, execute
-from src.notify import render, send
+from src.notify import render, send, send_failure_alert
 from src.prediction import make_report, rank, validate
 from src.storage import Store
 
@@ -156,9 +156,20 @@ class PipelineTests(unittest.TestCase):
         cal = Calendar(self.store, http, date(2026, 9, 10))
         self.assertFalse(cal.is_session(date(2026, 7, 10)))
         self.assertFalse(cal.is_session(date(2026, 1, 1)))
+        self.assertEqual(http.get.call_args.args[1]['date'], '20260101')
         self.assertTrue(cal.is_session(date(2026, 1, 2)))
         self.assertEqual(cal.shift(date(2026, 1, 2), 1), date(2026, 1, 5))
         self.assertEqual(cal.shift(date(2026, 12, 31), 1), date(2027, 1, 4))
+
+    def test_settlement_only_day_overrides_legacy_last_session_label(self):
+        """歷史表標題沿用最後交易日，但說明市場無交易者仍須休市。"""
+        http = Mock()
+        http.get.return_value = dict(stat='ok', data=[
+            ['2022-01-26','農曆春節前最後交易日','農曆春節前最後交易。'],
+            ['2022-01-27','農曆春節前最後交易日','1月27日市場無交易，僅辦理結算交割作業。']])
+        calendar = Calendar(self.store, http, date(2026,9,15))
+        self.assertTrue(calendar.is_session(date(2022,1,26)))
+        self.assertFalse(calendar.is_session(date(2022,1,27)))
 
     def test_calendar_rejects_wrong_year(self):
         """未公布年度不能靜默退回舊年度。"""
@@ -169,19 +180,21 @@ class PipelineTests(unittest.TestCase):
 
     @patch('src.data.time.sleep')
     def test_get_retries_transient_errors(self, sleep):
-        """429、5xx及逾時可重試GET；最多五次。"""
+        """429、5xx、逾時及分塊回應中斷可重試GET；最多五次。"""
         http = Http(0)
         limited = Mock(status_code=429, headers={'Retry-After': '2'})
         server = Mock(status_code=503, headers={})
         ok = Mock(status_code=200)
         ok.json.return_value = {'ok': True}
         http.session = Mock()
-        http.session.get.side_effect = [limited, server, requests.Timeout(), ok]
+        http.session.get.side_effect = [limited, server, requests.Timeout(),
+                                        requests.exceptions.ChunkedEncodingError(), ok]
         self.assertEqual(http.get('https://example.test'), {'ok': True})
-        self.assertEqual(http.session.get.call_count, 4)
-        http.session.get.side_effect = requests.Timeout()
+        self.assertEqual(http.session.get.call_count, 5)
+        http.session.get.side_effect = requests.exceptions.ChunkedEncodingError()
         with self.assertRaises(RuntimeError):
             http.get('https://example.test')
+        self.assertEqual(http.session.get.call_count, 10)
 
     @patch('src.data.time.sleep')
     def test_long_rate_limit_does_not_retry_early(self, sleep):
@@ -261,6 +274,29 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             send(self.store, self.report, url, client)
         self.assertEqual(client.post.call_count, 1)
+
+    def test_failure_alert_has_no_mentions_or_sensitive_details(self):
+        """最終告警只含固定維運資訊，不夾帶例外或觸發 Discord mention。"""
+        client = Mock()
+        client.post.return_value = Mock(status_code=200)
+        webhook = 'https://discord.com/api/webhooks/test/secret-token'
+        self.assertEqual(send_failure_alert(webhook, '2026-09-14', client), 'sent')
+        payload = client.post.call_args.kwargs['json']
+        self.assertEqual(payload['allowed_mentions'], {'parse': []})
+        self.assertIn('2026-09-14', payload['content'])
+        self.assertNotIn('secret-token', payload['content'])
+        self.assertEqual(client.post.call_count, 1)
+
+    def test_systemd_retries_then_alerts_once(self):
+        """direct 模式略過中途 OnFailure，達啟動上限後才觸發單一告警單元。"""
+        root = Path(__file__).resolve().parents[1]
+        daily = (root / 'deploy/kronos-daily.service').read_text(encoding='utf-8')
+        alert = (root / 'deploy/kronos-failure-notify.service').read_text(encoding='utf-8')
+        self.assertIn('StartLimitBurst=3', daily)
+        self.assertIn('Restart=on-failure', daily)
+        self.assertIn('RestartMode=direct', daily)
+        self.assertEqual(daily.count('OnFailure=kronos-failure-notify.service'), 1)
+        self.assertIn('python -m src.alert', alert)
 
     @patch('src.main.send')
     @patch('src.main.DataSource')

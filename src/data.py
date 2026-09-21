@@ -46,7 +46,8 @@ class Http:
                     raise requests.ConnectionError('temporary upstream failure')
                 response.raise_for_status()
                 return response.json()
-            except (requests.ConnectionError, requests.Timeout, requests.exceptions.JSONDecodeError):
+            except (requests.ConnectionError, requests.Timeout, requests.exceptions.JSONDecodeError,
+                    requests.exceptions.ChunkedEncodingError):
                 if attempt == 4:
                     raise RuntimeError('行情 GET 重試五次仍失敗') from None
                 if retry_after > 60:
@@ -124,14 +125,16 @@ class Calendar:
             raw = self.store.get(key)
             if raw is None:
                 raw = self.http.get('https://www.twse.com.tw/holidaySchedule/holidaySchedule',
-                                    {'response': 'json', 'queryYear': year - 1911})
+                                    {'response': 'json', 'date': f'{year}0101'})
                 if str(raw.get('stat', '')).lower() != 'ok' or not raw.get('data'):
                     raise ValueError(f'{year} 交易日曆尚未提供')
                 if any(parse_date(row[0]).year != year for row in raw['data']):
                     raise ValueError('交易日曆年份不符')
                 self.store.put(key, raw)
+            # 舊年度沿用『最後交易日』標題標示交割日，須優先讀取無交易說明。
             self.years[year] = {parse_date(row[0]) for row in raw['data']
-                                if not any(word in row[1] for word in ('開始交易', '最後交易'))}
+                                if any(word in ''.join(row[1:]) for word in ('無交易', '不交易'))
+                                or not any(word in row[1] for word in ('開始交易', '最後交易'))}
         return self.years[year]
 
     def is_session(self, day: date) -> bool:
