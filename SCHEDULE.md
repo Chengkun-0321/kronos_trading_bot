@@ -27,7 +27,7 @@
 
 休市日不發排行榜；官方日曆缺少的已確認臨時休市記錄於 [config/market_closures.json](config/market_closures.json)。機器必須開機且能連網。初始化與每日工作共用資料庫旁的程序鎖，重疊執行會退出並留下錯誤。暫時性行情 GET 最多重試五次；service 失敗後最多再啟動兩次，已完成的市場日快取不會重抓。
 
-報告位於 `data/reports/YYYY-MM-DD.json`，資料庫位於 `data/market.sqlite3`。通知成功後同日不重送；送達狀態不明時須先人工核對 Discord。自動重啟使用 `RestartMode=direct`，中途失敗不觸發 `OnFailure`；三次啟動均失敗才用原 webhook 發送無 mention 告警。Discord 故障時告警也可能失敗，journal 仍保留紀錄。詳見 [README](README.md#discord-與排程)。
+報告位於 `data/reports/YYYY-MM-DD.json`，資料庫位於 `data/market.sqlite3`。通知成功後同日不重送；送達狀態不明時須先人工核對 Discord。自動重啟使用 `RestartMode=direct`，中途失敗不觸發 `OnFailure`；三次啟動均失敗才用原 webhook 發送無 mention 告警。Discord 故障時告警也可能失敗，journal 仍保留紀錄。詳見 [README](README.md#怎麼使用)。
 
 ## 安裝與設定更新
 
@@ -98,9 +98,9 @@ systemctl --user enable --now kronos-daily.timer
 
 prepare使用獨立研究資料庫及research.lock，不搶每日market.lock。daily／train／evaluate共用data/gpu.lock；train／evaluate在17:45–20:00停止研究GPU工作，訓練保存可續跑進度，評估保留逐筆快取，20:00後以原命令續跑（train加--resume）。程序崩潰時鎖會由系統釋放。沒有新增每月重訓timer。
 
-訓練不應由kronos-daily.service啟動。研究命令與狀態檔詳見README；不因測試或訓練額外發Discord。資料日／模型版本分開防重送，sending／unknown仍需人工核對送達情況。
+訓練不應由kronos-daily.service啟動。研究命令與狀態檔詳見 [研究文件](docs/research.md)；不因測試或訓練額外發Discord。資料日／模型版本分開防重送，sending／unknown仍需人工核對送達情況。
 
-本次一次性研究已於2026-09-15以systemd-run啟動`kronos-research-20260914.service`，Nice=10，日誌為`data/research-five-years.log`；不含Webhook環境。研究入口遇GPU保留時段會等待並續跑，其他錯誤停止，狀態保存於`data/research/taiwan-20260914/pipeline.json`。此臨時service不會隨開機自動恢復，重開後用README的research_run命令續跑。
+本次一次性研究已於2026-09-15以systemd-run啟動`kronos-research-20260914.service`，Nice=10，日誌為`data/research-five-years.log`；不含Webhook環境。研究入口遇GPU保留時段會等待並續跑，其他錯誤停止，狀態保存於`data/research/taiwan-20260914/pipeline.json`。此臨時service不會隨開機自動恢復，重開後用 [研究文件](docs/research.md) 的 research_run 命令續跑。
 
 ```bash
 systemctl --user status kronos-research-20260914.service --no-pager
@@ -132,7 +132,7 @@ tail -n 30 data/research-five-years.log
 
 `deploy/kronos-strategy.timer` 每日19:00觸發，由程式依日曆判斷當週最後交易日；不是固定週五，也不是每五個交易日。`Persistent=false`不補跑錯過日期。搭配的service使用 `strategy --execute --send`，正式契約未確認會立即失敗；目前只提供範本，未安裝、未啟用，不會自動委託或通知。
 
-正式啟用前須完成README列出的平台契約、持股解析、委託終態核對與平台整合測試。不得僅移除檢查或以設定開關繞過。service不自動重啟，避免含交易副作用的盲目重試。行情鎖及GPU鎖與每日工作共用；若18:00工作尚未完成，策略退出並留journal紀錄，不搶占GPU、不改研究保留時段。
+正式啟用前須完成 [策略文件](docs/strategy.md) 列出的平台契約、持股解析、委託終態核對與平台整合測試。不得僅移除檢查或以設定開關繞過。service不自動重啟，避免含交易副作用的盲目重試。行情鎖及GPU鎖與每日工作共用；若18:00工作尚未完成，策略退出並留journal紀錄，不搶占GPU、不改研究保留時段。
 
 所有服務的EnvironmentFile改讀根目錄 `.env`，現有每日timer的18:00時間與通知防重送不變；Python CLI也讀同檔，外部環境值優先。`data/discord.env`保留為未讀取的遷移備份，不再維護兩份設定。
 
