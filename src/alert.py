@@ -15,6 +15,8 @@ def main():
     Returns:
         None；失敗時以狀態碼1退出，安全錯誤由 journal 保留。
     """
+    from .environment import load_env
+    load_env()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     day = datetime.now(TAIPEI).date().isoformat()
     try:

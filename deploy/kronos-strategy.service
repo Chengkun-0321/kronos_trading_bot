@@ -1,5 +1,5 @@
 [Unit]
-Description=Notify Discord after Kronos daily retries are exhausted
+Description=Kronos five-session strategy (disabled until platform contract verified)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,6 +8,7 @@ Type=oneshot
 WorkingDirectory=/home/large_space_v2/kronos_trading_bot
 EnvironmentFile=/home/large_space_v2/kronos_trading_bot/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.alert
-TimeoutStartSec=1min
+ExecStart=/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main strategy --execute --send
+Restart=no
+TimeoutStartSec=12h
 UMask=0077

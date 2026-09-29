@@ -310,7 +310,8 @@ class PipelineTests(unittest.TestCase):
         source.return_value.universe.return_value = {'2330': {'name': '台積電'}}
         make.return_value = self.report
         args = argparse.Namespace(db=self.path, command='daily', date='2026-09-10', no_send=True)
-        with patch('builtins.print'):
+        # 此案例只測原版封存；不能讀取開發機已啟用的第二模型登錄。
+        with patch('src.main.ROOT', self.path.parent), patch('builtins.print'):
             execute(args, datetime(2026, 9, 11, 2, tzinfo=TAIPEI))
             execute(args, datetime(2026, 9, 11, 2, tzinfo=TAIPEI))
         self.assertEqual(make.call_count, 1)

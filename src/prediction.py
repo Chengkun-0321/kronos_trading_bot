@@ -71,6 +71,23 @@ class Predictor:
                                          T=1.0, top_p=0.9, top_k=0, sample_count=1, verbose=False)
         return {key: float(result.iloc[0][key]) for key in COLS}
 
+    def predict_path(self, symbol: str, frame: pd.DataFrame, targets: list[date]) -> list[dict]:
+        """五日策略獨立種子與完整日期軸，不改既有一日推論。"""
+        seed = int.from_bytes(hashlib.sha256(
+            f'42:weekly-v1:{symbol}:{targets[0]}'.encode()).digest()[:4], 'big')
+        random.seed(seed)
+        np.random.seed(seed)
+        self.torch.manual_seed(seed)
+        if self.torch.cuda.is_available():
+            self.torch.cuda.manual_seed_all(seed)
+        with self.torch.inference_mode():
+            result = self.engine.predict(
+                frame[COLS], pd.to_datetime(frame['date']), pd.Series(pd.to_datetime(targets)),
+                pred_len=len(targets), T=1.0, top_p=0.9, top_k=0, sample_count=1, verbose=False)
+        if len(result) != len(targets):
+            raise DataQualityError('預測日數不符')
+        return [{key: float(row[key]) for key in COLS} for _, row in result.iterrows()]
+
     def predict_batch(self, items):
         """固定每個樣本的抽樣串流；批次數值差異由評估快取版本隔離。"""
         from model.kronos import calc_time_stamps

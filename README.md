@@ -1,6 +1,6 @@
 # Kronos 台股全市場觀察
 
-每日台灣時間 18:00，以平台可交易清單為範圍，從交易所取得日 K，使用本機 Kronos-small 預測下一交易日，再發一則 Discord 排行榜。支援一次性台股微調及雙模型觀察；不查持倉、不下單、不做新聞分析。
+每日台灣時間 18:00，以平台可交易清單為範圍，從交易所取得日 K，使用本機 Kronos-small 預測下一交易日，再發一則 Discord 排行榜。支援一次性台股微調及雙模型觀察；每日觀察不查持倉、不下單、不做新聞分析；另有五日策略模擬驗證，正式委託暫停用。
 
 ## 專案交接
 
@@ -68,7 +68,7 @@
 
 排程建立紀錄、設定位置、查詢日誌與啟停指令見根目錄 [SCHEDULE.md](SCHEDULE.md)。
 
-憑證放 `data/discord.env`，格式參考 `.env.example`，權限設為600；此檔與本機資料均被Git忽略。手動CLI讀程序環境，systemd讀該環境檔。不在程式、報告或日誌保存Webhook網址。
+憑證統一放根目錄 `.env`，格式參考 `.env.example`，權限設為600；此檔與本機資料均被Git忽略。手動CLI載入根目錄 `.env`，程序環境值優先；systemd讀同一環境檔。帳號鍵為 `account`、密碼鍵為 `password`、通知鍵為 `DISCORD_WEBHOOK_URL`。不在程式、報告或日誌保存Webhook網址。
 
 先完成初始化、全市場 `--no-send` 驗證及測試，再安裝：
 
@@ -163,3 +163,53 @@ PYTHONPATH=stock_final_project_for_class-main .venv/bin/python -m unittest disco
 ### 批次評估
 
 `evaluate`預設每批128筆、FP32，不使用梯度累積。每個樣本有獨立固定抽樣種子；批次運算可能與逐筆推論產生數值差異。新快取為輸出目錄下`evaluation-batch128-v1.sqlite3`，舊`evaluation.sqlite3`保留但不混用。重跑相同evaluate命令可續接新快取，尾批不足128照實處理。批次推論故障停止，已提交批次保留；進度與速度每2560筆寫入日誌。
+
+
+## 五日策略（2026-09-22，僅模擬驗證）
+
+每日18:00觀察保持原狀。五日策略在每週最後交易日19:00後，以原版Kronos-small的120根完整日K預測未來5個交易日，分數為第5日收盤／第1日開盤−1；全市場排名，同分依代號。這是每週一次，遇休市不保證間隔五個交易日；日期按官方日曆與臨時休市設定判定，日曆不明即停止。
+
+管理帳戶全部持股。排名>20或分數≤0整檔賣出；缺有效訊號保留並占名額。Top10且分數嚴格>1%的未持股依排名補位，每次買10張；滿10檔時以更高排名候選替換最弱有效持股，不限主動替換次數。10張取代10%等權，保留股不調整張數。原有超過10檔且無必要賣出時，停止新買並提示，不擅自多賣。
+
+全部賣单先於買單，價格使用訊號日實際收盤價。賣單受理即釋放目標名額，因此實際成交過程可能超過10檔；拒絕的賣單不釋放名額，其替換買單略過。資金不足停止本輪新買，重跑也不繼續；缺候選保留現金。必要賣出不限數量。
+
+```bash
+# 寫入已核對的模擬持股，單位為張；空倉為 {}，這不是平台原始回應格式
+# 將JSON保存在已忽略的data/reports/內，例如 {"2330": 10}
+.venv/bin/python -m src.main strategy --dry-run --holdings data/reports/holdings.json --no-send
+
+# 省略--holdings時唯讀查詢平台；目前只接受已確認的成功空持股回應
+.venv/bin/python -m src.main strategy --dry-run --no-send
+
+# 歷史資料日必須是當週最後交易日；不能搭配--send
+.venv/bin/python -m src.main strategy --date 2026-09-18 --holdings data/reports/holdings.json --no-send
+
+# 離線查閱封存，不查持股、不下載、不使用GPU
+.venv/bin/python -m src.main strategy-preview
+.venv/bin/python -m src.main strategy-preview --json
+```
+
+預設不發Discord；只有明示 `--send` 才發當日「五日策略」模擬通知，明確標示未下單。`--no-send`只控制通知，`--dry-run`才表示不委託；目前 `--execute` 一律在外部操作之前被平台契約檢查拒絕，沒有環境變數可解除。未進行任何測試買賣。
+
+策略報告與通知獨立存於行情庫旁 `strategy.sqlite3`，JSON副本為 `reports/YYYY-MM-DD.weekly-v1.json`。同日重跑沿用首次封存的訊號和持股，不重新套用不同持股檔；要比较不同模擬輸入，使用不同目錄的 `--db` 隔離整組資料。正式訊號另使用 `weekly-v1-live` 鍵，不重用模擬封存；`strategy-preview --live` 可離線讀取其委託狀態。策略庫綁定交易帳戶，不能切換帳戶混用歷史紀錄。保持行情庫程序鎖、strategy-run.lock與共用GPU鎖；與每日工作重疊時退出，不同時推論。Discord沿用sending／unknown防重送。
+
+委託引擎已用替身驗證：POST前提交sending，受理記accepted，逾時／不明結果記unknown並停止；accepted不代表成交，不以查無持股推定單據過期。未結委託阻擋跨週執行，禁止自動撤銷、刪除紀錄或重送。正式API仍需核對非空持股欄位及張數、可賣量、拒絕／資金不足回應、委託效期與成交／撤單終態查詢，補齊平台解析及核對測試，再解除正式執行入口的契約封鎖。現階段完整提供訊號與調倉模擬、狀態機測試，尚非可啟用的自動交易系統。
+
+憑證統一根目錄 `.env`，不輸出內容；舊 `data/discord.env` 僅作未讀取的遷移備份，仍維持Git忽略。調整根目錄檔案權限為600。19:00排程範本見SCHEDULE，尚未安裝或啟用。
+
+## 2026-09-22一次性四交易日補跑
+
+使用者另行明示授權本次例外：模型只讀截至9/18的120根日K，預測9/21～9/24四個交易日（9/25休市），排名使用D4收盤／D1開盤−1；9/21資料只用於買單限價，不進入模型。Top10且分數>1%，每檔10張，缺9/21收盤價略過且不以第11名遞補。
+
+```bash
+# 準備全市場訊號及買單，沒有外部委託或通知
+.venv/bin/python -m src.main strategy-catchup
+# 本次已授權的實際模擬平台委託與Discord通知，僅2026-09-22可用
+.venv/bin/python -m src.main strategy-catchup --execute --send
+# 離線預覽，不重新推論或送單
+.venv/bin/python -m src.main strategy-catchup --preview
+```
+
+執行前重新查詢空倉；非空且格式未確認即停止。沿用strategy.sqlite3與共用鎖，報告鍵為catchup-20260918-four-sessions，價格日期與執行日期另存。任何其他既存委託阻擋新建倉。提交前持久化整輪started及逐筆sending；任何拒絕、不明結果或程序中斷都不在重跑時續送剩餘買單，accepted僅代表受理。Discord包含訊號日期、限價日期、實際委託狀態，採獨立通知鍵防重送；本次一般API錯誤尚無細分契約，非明確成功一律按unknown停止。
+
+本次例外不解除一般strategy --execute的契約限制，不啟用19:00策略timer，不允許任意日期補單。新入口不接受變更日期或張數；隔日只能預覽，禁止新委託。原始平台回應去機密後保留於委託庫，勿將結果不明的單據刪除重送。

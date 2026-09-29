@@ -1,0 +1,10 @@
+[Unit]
+Description=Check last weekly trading session at 19:00 Asia/Taipei (not enabled)
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Asia/Taipei
+Persistent=false
+Unit=kronos-strategy.service
+
+[Install]
+WantedBy=timers.target

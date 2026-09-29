@@ -16,7 +16,7 @@
 | 安裝位置 | `/home/ciot/.config/systemd/user/`，符號連結指向專案 `deploy/` 檔案 |
 | 工作目錄 | `/home/large_space_v2/kronos_trading_bot` |
 | 執行指令 | `/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main daily` |
-| 憑證設定 | `data/discord.env`，權限 600、Git 忽略；不在本文件記錄網址或 token |
+| 憑證設定 | 根目錄 `.env`，權限 600、Git 忽略；不在本文件記錄網址或 token |
 | 失敗重啟 | 間隔5分鐘；23小時內最多3次啟動，耗盡後發 Discord 告警 |
 | 單次執行上限 | `TimeoutStartSec=12h` |
 | 關機補跑 | `Persistent=false`，錯過時間不補跑 |
@@ -126,3 +126,20 @@ tail -n 30 data/research-five-years.log
 ### 128筆批次評估切換（2026-09-16）
 
 已停止舊`kronos-research-accelerated-20260916.service`以切換批次评估；新版一次性背景服務命名為`kronos-research-batch128-20260916.service`，沿用research_run、原資料與輸出目錄、data/research-five-years.log，已完成訓練不重跑。使用獨立批次評估快取重算兩模型；每日17:45–20:00保留、GPU鎖與完成後activate行為不變。查詢時使用新服務名。
+
+
+## 五日策略19:00範本（2026-09-22，未啟用）
+
+`deploy/kronos-strategy.timer` 每日19:00觸發，由程式依日曆判斷當週最後交易日；不是固定週五，也不是每五個交易日。`Persistent=false`不補跑錯過日期。搭配的service使用 `strategy --execute --send`，正式契約未確認會立即失敗；目前只提供範本，未安裝、未啟用，不會自動委託或通知。
+
+正式啟用前須完成README列出的平台契約、持股解析、委託終態核對與平台整合測試。不得僅移除檢查或以設定開關繞過。service不自動重啟，避免含交易副作用的盲目重試。行情鎖及GPU鎖與每日工作共用；若18:00工作尚未完成，策略退出並留journal紀錄，不搶占GPU、不改研究保留時段。
+
+所有服務的EnvironmentFile改讀根目錄 `.env`，現有每日timer的18:00時間與通知防重送不變；Python CLI也讀同檔，外部環境值優先。`data/discord.env`保留為未讀取的遷移備份，不再維護兩份設定。
+
+本次已重新載入既有每日／告警服務並核對EnvironmentFile，未啟動服務，原每日timer保持enabled。新增策略timer未安裝或啟用。離線驗證79項主流程及6項fetcher測試通過，systemd單元驗證通過。
+
+## 2026-09-22一次性補跑例外
+
+使用者明示授權手動strategy-catchup：截至9/18的120日訊號，預測9/21～9/24，使用9/21收盤價買入並通知Discord。仅允許9/22執行；使用行情、策略及GPU鎖，不建立或啟用timer，也不修改原每日18:00工作。一般strategy --execute仍停用。此一次性例外不沿用至下週或其他日期。
+
+本次02:30已手動完成補跑，10筆買單皆受理（尚未核對成交），Discord已送達；沒有新增自動執行排程。再次查看使用strategy-catchup --preview，不刪除started／completed或accepted紀錄後重跑。

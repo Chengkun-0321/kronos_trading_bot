@@ -49,6 +49,12 @@ def execute(args, now=None):
                          getattr(args, 'batch_size', None), getattr(args, 'accumulation_steps', None),
                          getattr(args, 'precision', None))
         return evaluate(args.dataset, args.output, args.activate)
+    if args.command == 'strategy-catchup':
+        from .catchup import execute as execute_catchup
+        return execute_catchup(args, now)
+    if args.command in ('strategy', 'strategy-preview'):
+        from .strategy import execute as execute_strategy
+        return execute_strategy(args, now)
     store = Store(args.db)
     try:
         if args.command == 'preview':
@@ -156,7 +162,7 @@ def execute(args, now=None):
 
 def main():
     """解析 CLI 並持有資料庫旁的程序鎖，失敗回傳非零退出碼供 systemd 追蹤。"""
-    parser = argparse.ArgumentParser(description='Kronos 台股全市場觀察（無交易功能）')
+    parser = argparse.ArgumentParser(description='Kronos 台股觀察與五日策略（正式委託停用）')
     parser.add_argument('--db', type=Path, default=ROOT / 'data/market.sqlite3')
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('init', 'daily', 'preview'):
@@ -188,6 +194,12 @@ def main():
             cmd.add_argument('--smoke-steps', type=int, default=0, help='僅測試N個梯度樣本，不保存模型')
         if name == 'evaluate':
             cmd.add_argument('--activate', action='store_true', help='完整評估後登錄每日第二模型')
+    from .strategy import add_parsers
+    from .environment import load_env
+    add_parsers(sub)
+    from .catchup import add_parser
+    add_parser(sub)
+    load_env()
     args = parser.parse_args()
     args.db = args.db.resolve()
     research = args.command in ('prepare', 'train', 'evaluate')
@@ -203,9 +215,11 @@ def main():
             parser.error('--smoke-steps不可為負值')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     lock = args.dataset / 'research.lock' if research else args.db.with_suffix('.lock')
-    gpu = process_lock(ROOT / 'data/gpu.lock') if args.command in ('daily', 'train', 'evaluate') else nullcontext()
+    gpu = process_lock(ROOT / 'data/gpu.lock') if args.command in ('daily', 'train', 'evaluate', 'strategy', 'strategy-catchup') and not getattr(args, 'preview', False) else nullcontext()
+    strategy_lock = (process_lock(args.db.parent / 'strategy-run.lock')
+                     if args.command in ('strategy', 'strategy-preview', 'strategy-catchup') else nullcontext())
     try:
-        with process_lock(lock), gpu:
+        with process_lock(lock), strategy_lock, gpu:
             execute(args)
     except ResearchPaused as exc:
         LOG.info('%s', exc)

@@ -22,6 +22,12 @@ def _validate_webhook(webhook: str):
 
 def render(report: dict) -> str:
     """將完整報告縮成 Discord 單則訊息，保留日期、涵蓋數及不足二十檔狀態。"""
+    if report.get('model_id') == 'catchup-20260918-four-sessions':
+        from .catchup import render as render_catchup
+        return render_catchup(report)
+    if report.get('model_id') in ('weekly-v1', 'weekly-v1-live'):
+        from .strategy import render as render_strategy
+        return render_strategy(report)
     candidates = rank(report['predictions'])
     label = report.get("model_id", "pretrained")
     lines = [f"Kronos [{label}] 前20名觀察名單｜資料 {report['date']} → 預測 {report['target_date']}",

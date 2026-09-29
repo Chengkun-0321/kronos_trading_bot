@@ -9,7 +9,7 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 WorkingDirectory=/home/large_space_v2/kronos_trading_bot
-EnvironmentFile=/home/large_space_v2/kronos_trading_bot/data/discord.env
+EnvironmentFile=/home/large_space_v2/kronos_trading_bot/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/large_space_v2/kronos_trading_bot/.venv/bin/python -m src.main daily
 Restart=on-failure
